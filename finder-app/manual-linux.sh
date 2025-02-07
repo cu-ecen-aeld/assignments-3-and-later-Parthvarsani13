@@ -122,4 +122,4 @@ cd ${OUTDIR}
 gzip -f initramfs.cpio
 
 echo "Adding the Image in outdir"
-cp /tmp/aeld/linux-stable/arch/arm64/boot/Image ${OUTDIR}/
+cp ${OUTDIR}/linux-stable/arch/arm64/boot/Image ${OUTDIR}/
