@@ -58,12 +58,10 @@ do
 	./writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
 done
 
-# Run finder and write output to /tmp/assignment4-result.txt
-finder.sh "$WRITEDIR" "$WRITESTR" > /tmp/assignment4-result.txt
+OUTPUTSTRING=$(finder.sh "$WRITEDIR" "$WRITESTR")
 
-#OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
-# Read the output from the file
-OUTPUTSTRING=$(cat /tmp/assignment4-result.txt)
+# Write output to /tmp/assignment4-result.txt
+echo "${OUTPUTSTRING}" > /tmp/assignment4-result.txt
 
 # remove temporary directories
 rm -rf /tmp/aeld-data
