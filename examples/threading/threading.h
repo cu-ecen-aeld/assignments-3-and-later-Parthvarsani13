@@ -16,6 +16,23 @@ struct thread_data{
      */
 
     /**
+     * Mutex that the thread will attempt to lock and unlock.
+     */
+    pthread_mutex_t *mutex;
+
+    /**
+     * Time in milliseconds that the thread should wait before
+     * attempting to acquire the mutex.
+     */
+    int wait_to_obtain_ms;
+
+    /**
+     * Time in milliseconds that the thread should hold the mutex
+     * once acquired before releasing it.
+     */
+    int wait_to_release_ms;
+
+    /**
      * Set to true if the thread completed with success, false
      * if an error occurred.
      */
