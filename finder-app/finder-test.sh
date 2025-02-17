@@ -59,11 +59,18 @@ do
 done
 
 OUTPUTSTRING=$(finder.sh "$WRITEDIR" "$WRITESTR")
+<<<<<<< HEAD
 
 # Write output to /tmp/assignment4-result.txt
 echo "${OUTPUTSTRING}" > /tmp/assignment4-result.txt
 
 # Clean up temporary files
+=======
+
+# Write output to /tmp/assignment4-result.txt
+echo "${OUTPUTSTRING}" > /tmp/assignment4-result.txt
+# remove temporary directories
+>>>>>>> f9886c2 (Update finder-test.sh)
 rm -rf /tmp/aeld-data
 
 set +e
