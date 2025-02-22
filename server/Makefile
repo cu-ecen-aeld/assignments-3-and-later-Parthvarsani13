@@ -2,7 +2,7 @@
 # https://gist.github.com/Miouyouyou/6ee23eec681b21782b17ec8a45258b87
 
 # Set the cross-compiler prefix. If not set, defaults to an empty string.
-CROSS_COMPILE ?= 
+CROSS_COMPILE ?= aarch64-none-linux-gnu-
 
 CC = $(CROSS_COMPILE)gcc
 CFLAGS = -g -Wall
