@@ -259,6 +259,10 @@ static void daemon_run(void)
 
 int main(int argc, char *argv[])
 {
+    // Remove the file if it exists from any previous run, otherwise was facing issue 
+    // data was appended and not removed successfully.
+    remove(DATAFILE_PATH);
+
     // 1) Open syslog
     openlog("aesdsocket", LOG_PID | LOG_CONS, LOG_USER);
 

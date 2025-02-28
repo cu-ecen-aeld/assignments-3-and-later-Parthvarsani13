@@ -4,7 +4,8 @@
 # Set the cross-compiler prefix. If not set, defaults to an empty string.
 CROSS_COMPILE ?= aarch64-none-linux-gnu-
 
-CC = $(CROSS_COMPILE)gcc
+#CC = $(CROSS_COMPILE)gcc
+CC = gcc
 CFLAGS = -g -Wall
 EXECUTABLE = aesdsocket
 
