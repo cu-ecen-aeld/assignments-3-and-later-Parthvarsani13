@@ -1,6 +1,7 @@
 /****************************************************************************
  * @file aesdsocket.c
  * @brief TCP server for AESD Assignment
+ * @author Parth Varsani
  *
  * - Binds to TCP port 9000
  * - Waits for incoming connections
@@ -13,6 +14,12 @@
  * - On signal, logs "Caught signal, exiting", stops accepting, joins threads,
  *   removes file, and gracefully exits
  * - Supports a -d option to run as a daemon
+ * 
+ * @ref Implemented these code, taking reference from Jainil Patel, (Learned this method)
+ *   1) Using O_TRUNC at startup to ensure a fresh file, similar to the approach in the 
+ *      reference code snippet.
+ *   2) Calling shutdown(client_fd, SHUT_RDWR) before close(), as shown in the reference 
+ *      code snippet, for a more graceful socket shutdown.
  ****************************************************************************/
 
 #include <stdio.h>
@@ -195,16 +202,19 @@ static void* client_thread_func(void *arg)
         pthread_mutex_unlock(&g_file_mutex);
     }
 
-    // Check if recv ended due to error
+    // If recv returned <= 0, we exit the loop
     if (rx_bytes < 0) {
         syslog(LOG_ERR, "recv error from %s: %s", client_ip, strerror(errno));
     }
+
+    // Graceful socket shutdown
+    shutdown(client_fd, SHUT_RDWR);
+    close(client_fd);
 
     syslog(LOG_INFO, "Closed connection from %s", client_ip);
 
     // Cleanup
     fclose(fp_data);
-    close(client_fd);
 
     return NULL;
 }
@@ -259,10 +269,6 @@ static void daemon_run(void)
 
 int main(int argc, char *argv[])
 {
-    // Remove the file if it exists from any previous run, otherwise was facing issue 
-    // data was appended and not removed successfully.
-    remove(DATAFILE_PATH);
-
     // 1) Open syslog
     openlog("aesdsocket", LOG_PID | LOG_CONS, LOG_USER);
 
@@ -281,7 +287,24 @@ int main(int argc, char *argv[])
         run_as_daemon = 1;
     }
 
-    // 5) Prepare to bind on port 9000
+    // 5) Truncate (or create) the data file at startup
+    {
+        int fd = open(DATAFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0666);
+        if (fd < 0) {
+            syslog(LOG_ERR, "Failed to open/create %s: %s", DATAFILE_PATH, strerror(errno));
+            closelog();
+            return -1;
+        }
+        close(fd);
+    }
+
+    // 6) Daemonize if requested
+    if (run_as_daemon)
+    {
+        daemon_run();
+    }
+
+    // 7) Prepare to bind on port 9000
     struct addrinfo hints, *servinfo;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family   = AF_INET;      // IPv4
@@ -296,7 +319,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // 6) Create socket
+    // 8) Create socket
     g_socketfd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
     if (g_socketfd == -1)
     {
@@ -306,7 +329,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // 7) Set socket option SO_REUSEADDR
+    // 9) Set socket option SO_REUSEADDR
     int optval = 1;
     if (setsockopt(g_socketfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
     {
@@ -317,7 +340,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // 8) Bind to the port
+    // 10) Bind to the port
     if (bind(g_socketfd, servinfo->ai_addr, servinfo->ai_addrlen) == -1)
     {
         syslog(LOG_ERR, "bind failed: %s", strerror(errno));
@@ -328,13 +351,7 @@ int main(int argc, char *argv[])
     }
     freeaddrinfo(servinfo);
 
-    // 9) Daemonize if requested
-    if (run_as_daemon)
-    {
-        daemon_run();
-    }
-
-    // 10) Listen for connections
+    // 11) Listen for connections
     if (listen(g_socketfd, SOMAXCONN) == -1)
     {
         syslog(LOG_ERR, "listen failed: %s", strerror(errno));
@@ -345,14 +362,14 @@ int main(int argc, char *argv[])
 
     syslog(LOG_INFO, "aesdsocket server listening on port %s", SERVER_PORT);
 
-    // 11) Create the timer thread (for 10-second timestamps)
+    // 12) Create the timer thread (for 10-second timestamps)
     if (pthread_create(&g_timer_thread, NULL, timer_thread_func, NULL) != 0)
     {
         syslog(LOG_ERR, "Failed to create timer thread: %s", strerror(errno));
         // We could continue, but no timestamps would be written
     }
 
-    // 12) Main server loop: accept connections until g_exit_flag is set
+    // 13) Main server loop: accept connections until g_exit_flag is set
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
@@ -395,7 +412,7 @@ int main(int argc, char *argv[])
         SLIST_INSERT_HEAD(&g_thread_list_head, new_node, entries);
     }
 
-    // 13) Stop accepting new connections, join existing client threads
+    // 14) Stop accepting new connections, join existing client threads
     struct thread_list_node *node;
     while (!SLIST_EMPTY(&g_thread_list_head))
     {
@@ -405,10 +422,10 @@ int main(int argc, char *argv[])
         free(node);
     }
 
-    // 14) Join the timer thread
+    // 15) Join the timer thread
     pthread_join(g_timer_thread, NULL);
 
-    // 15) Final cleanup
+    // 16) Final cleanup
     if (g_socketfd != -1)
     {
         close(g_socketfd);

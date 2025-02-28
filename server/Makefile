@@ -6,7 +6,7 @@ CROSS_COMPILE ?= aarch64-none-linux-gnu-
 
 #CC = $(CROSS_COMPILE)gcc
 CC = gcc
-CFLAGS = -g -Wall
+CFLAGS = -g -Wall -pthread
 EXECUTABLE = aesdsocket
 
 SRC = aesdsocket.c
