@@ -1,3 +1,4 @@
+
 /*
  * aesdchar.h
  *
@@ -48,3 +49,4 @@ int aesd_init_module(void);
 void aesd_cleanup_module(void);
 
 #endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */
+
