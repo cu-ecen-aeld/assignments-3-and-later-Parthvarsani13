@@ -39,7 +39,13 @@
 #include <time.h>
 
 #define SERVER_PORT     "9000"
-#define DATAFILE_PATH   "/var/tmp/aesdsocketdata"
+
+#ifdef USE_AESD_CHAR_DEVICE
+    #define DATAFILE_PATH "/dev/aesdchar"
+#else
+    #define DATAFILE_PATH "/var/tmp/aesdsocketdata"
+#endif
+
 #define BUF_MAXLEN      1024
 
 // Global listening socket
@@ -52,7 +58,9 @@ static pthread_mutex_t g_file_mutex;
 static volatile sig_atomic_t g_exit_flag = 0;
 
 // Thread for periodic timestamp
+#ifndef USE_AESD_CHAR_DEVICE
 static pthread_t g_timer_thread;
+#endif
 
 // Structure for storing thread info in a singly linked list
 struct thread_list_node {
@@ -81,6 +89,7 @@ static void handle_exit(int sig)
     // We do NOT call exit() here; we let main join threads, remove file, etc.
 }
 
+#ifndef USE_AESD_CHAR_DEVICE
 /**
  * @brief Timer thread function
  *        Every 10 seconds, appends a timestamp line to DATAFILE_PATH
@@ -125,6 +134,7 @@ static void* timer_thread_func(void* arg)
     }
     return NULL;
 }
+#endif
 
 /**
  * @brief Thread function to handle one client connection.
@@ -144,8 +154,7 @@ static void* client_thread_func(void *arg)
     char *client_ip = inet_ntoa(caddr.sin_addr);
     syslog(LOG_INFO, "Accepted connection from %s", client_ip);
 
-    // Open the data file for reading/writing in "a+"
-    // (We lock/unlock for each read/write below)
+    // Open the data file (or device)
     FILE *fp_data = fopen(DATAFILE_PATH, "a+");
     if (!fp_data) {
         syslog(LOG_ERR, "Failed to open file %s: %s", DATAFILE_PATH, strerror(errno));
@@ -159,7 +168,6 @@ static void* client_thread_func(void *arg)
     // Receive data in a loop
     while ((rx_bytes = recv(client_fd, rx_buffer, BUF_MAXLEN, 0)) > 0)
     {
-        // Lock the file for writing
         pthread_mutex_lock(&g_file_mutex);
 
         // Write the incoming data
@@ -167,57 +175,61 @@ static void* client_thread_func(void *arg)
         if (written < (size_t)rx_bytes) {
             syslog(LOG_ERR, "File write error (only wrote %zu of %zu)", written, (size_t)rx_bytes);
         }
+        fflush(fp_data);
 
-        // Flush to ensure data is written
-        if (fflush(fp_data) == EOF) {
-            syslog(LOG_ERR, "File flush error: %s", strerror(errno));
-        }
+        pthread_mutex_unlock(&g_file_mutex);
 
-        // If we detect a newline, send entire file content back
+        // If we detect a newline, read **only the last written line**
         if (memchr(rx_buffer, '\n', rx_bytes))
         {
-            // Rewind to start
+            pthread_mutex_lock(&g_file_mutex);
+
+#ifdef USE_AESD_CHAR_DEVICE
+            // For /dev/aesdchar, read only the last line written
+            FILE *fp_read = fopen(DATAFILE_PATH, "r");
+#else
+            // For regular file, seek to the last line
             if (fseek(fp_data, 0, SEEK_SET) != 0) {
                 syslog(LOG_ERR, "fseek error: %s", strerror(errno));
-            } else {
-                char readbuf[BUF_MAXLEN];
-                size_t bytes_read;
-                while ((bytes_read = fread(readbuf, 1, BUF_MAXLEN, fp_data)) > 0)
-                {
-                    ssize_t sent = send(client_fd, readbuf, bytes_read, 0);
-                    if (sent < 0) {
-                        syslog(LOG_ERR, "Send error: %s", strerror(errno));
-                        break; // stop sending on error
-                    }
+            }
+            FILE *fp_read = fp_data;
+#endif
+
+            if (fp_read) {
+                char last_line[BUF_MAXLEN] = {0};
+                while (fgets(last_line, sizeof(last_line), fp_read)) {
+                    // Keep reading until the last line
                 }
+
+                // Send only the last line to the client
+                ssize_t sent = send(client_fd, last_line, strlen(last_line), 0);
+                if (sent < 0) {
+                    syslog(LOG_ERR, "Send error: %s", strerror(errno));
+                }
+
+                // Close file if it was reopened
+#ifdef USE_AESD_CHAR_DEVICE
+                fclose(fp_read);
+#endif
             }
 
-            // Seek back to end for further appends
-            if (fseek(fp_data, 0, SEEK_END) != 0) {
-                syslog(LOG_ERR, "fseek error while rewinding to end: %s", strerror(errno));
-            }
+            pthread_mutex_unlock(&g_file_mutex);
         }
-
-        // Unlock after we finish reading/writing
-        pthread_mutex_unlock(&g_file_mutex);
     }
 
-    // If recv returned <= 0, we exit the loop
     if (rx_bytes < 0) {
         syslog(LOG_ERR, "recv error from %s: %s", client_ip, strerror(errno));
     }
 
-    // Graceful socket shutdown
     shutdown(client_fd, SHUT_RDWR);
     close(client_fd);
-
     syslog(LOG_INFO, "Closed connection from %s", client_ip);
-
-    // Cleanup
     fclose(fp_data);
 
     return NULL;
 }
+
+
 
 /**
  * @brief Run as a daemon process using the double-fork method.
@@ -287,6 +299,7 @@ int main(int argc, char *argv[])
         run_as_daemon = 1;
     }
 
+#ifndef USE_AESD_CHAR_DEVICE
     // 5) Truncate (or create) the data file at startup
     {
         int fd = open(DATAFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0666);
@@ -297,6 +310,7 @@ int main(int argc, char *argv[])
         }
         close(fd);
     }
+#endif
 
     // 6) Daemonize if requested
     if (run_as_daemon)
@@ -362,12 +376,14 @@ int main(int argc, char *argv[])
 
     syslog(LOG_INFO, "aesdsocket server listening on port %s", SERVER_PORT);
 
+#ifndef USE_AESD_CHAR_DEVICE
     // 12) Create the timer thread (for 10-second timestamps)
     if (pthread_create(&g_timer_thread, NULL, timer_thread_func, NULL) != 0)
     {
         syslog(LOG_ERR, "Failed to create timer thread: %s", strerror(errno));
         // We could continue, but no timestamps would be written
     }
+#endif
 
     // 13) Main server loop: accept connections until g_exit_flag is set
     struct sockaddr_in client_addr;
@@ -423,7 +439,10 @@ int main(int argc, char *argv[])
     }
 
     // 15) Join the timer thread
+#ifndef USE_AESD_CHAR_DEVICE
     pthread_join(g_timer_thread, NULL);
+#endif
+
 
     // 16) Final cleanup
     if (g_socketfd != -1)

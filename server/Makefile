@@ -3,11 +3,14 @@
 
 # If Yocto sets CROSS_COMPILE or CC in the environment, we won't override it.
 CROSS_COMPILE ?=
-CC ?= $(CROSS_COMPILE)gcc
+#CC ?= $(CROSS_COMPILE)gcc
+
+CC ?= gcc
 
 # We also let LDFLAGS be provided by the environment if set
-CFLAGS ?= -g -Wall -pthread
+CFLAGS ?= -g -Wall -pthread -DUSE_AESD_CHAR_DEVICE
 LDFLAGS ?=
+
 
 EXECUTABLE = aesdsocket
 SRC = aesdsocket.c
