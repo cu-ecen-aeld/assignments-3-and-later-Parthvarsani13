@@ -2,7 +2,8 @@
 
 # Allow CROSS_COMPILE override
 CROSS_COMPILE ?= 
-CC := $(CROSS_COMPILE)gcc
+#CC := $(CROSS_COMPILE)gcc
+CC ?= gcc
 
 # Compiler and linker flags
 CFLAGS ?= -g -Wall -pthread -DUSE_AESD_CHAR_DEVICE
