@@ -30,6 +30,8 @@
 #include <pthread.h>
 #include <sys/queue.h>
 #include <time.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
+
 
 #define SERVER_PORT "9000"
 
@@ -114,44 +116,77 @@ static void* client_thread_func(void *arg) {
     char *client_ip = inet_ntoa(caddr.sin_addr);
     syslog(LOG_INFO, "Accepted connection from %s", client_ip);
 
-    char rx_buffer[BUF_MAXLEN];
+    char rx_buffer[BUF_MAXLEN + 1];
     ssize_t rx_bytes;
 
     while ((rx_bytes = recv(client_fd, rx_buffer, BUF_MAXLEN, 0)) > 0) {
-        pthread_mutex_lock(&g_file_mutex);
+        rx_buffer[rx_bytes] = '\0';
 
-        // Open the file/device for writing
-        int fd = open(DATAFILE_PATH, O_WRONLY | O_APPEND | O_CREAT, 0666);
+#ifdef USE_AESD_CHAR_DEVICE
+        if (strncmp(rx_buffer, "AESDCHAR_IOCSEEKTO:", strlen("AESDCHAR_IOCSEEKTO:")) == 0) {
+            unsigned int write_cmd, write_cmd_offset;
+            char *params = rx_buffer + strlen("AESDCHAR_IOCSEEKTO:");
+
+            if (sscanf(params, "%u,%u", &write_cmd, &write_cmd_offset) == 2) {
+                int fd = open(DATAFILE_PATH, O_RDWR);
+                if (fd < 0) {
+                    syslog(LOG_ERR, "Failed to open %s for ioctl: %s", DATAFILE_PATH, strerror(errno));
+                } else {
+                    struct aesd_seekto seekto;
+                    seekto.write_cmd = write_cmd;
+                    seekto.write_cmd_offset = write_cmd_offset;
+
+                    if (ioctl(fd, AESDCHAR_IOCSEEKTO, &seekto) == -1) {
+                        syslog(LOG_ERR, "ioctl AESDCHAR_IOCSEEKTO failed: %s", strerror(errno));
+                        close(fd);
+                        pthread_mutex_unlock(&g_file_mutex);
+                        continue;
+                    }
+
+                    // Perform a read from the new file position and send to client
+                    char send_buffer[BUF_MAXLEN];
+                    ssize_t bytes_read;
+                    while ((bytes_read = read(fd, send_buffer, BUF_MAXLEN)) > 0) {
+                        send(client_fd, send_buffer, bytes_read, 0);
+                    }
+
+                    close(fd);
+                }
+                pthread_mutex_unlock(&g_file_mutex);
+                continue; // skip normal write path
+            }
+        }
+#endif
+
+        // Normal write
+        pthread_mutex_lock(&g_file_mutex);
+        int fd = open(DATAFILE_PATH, O_WRONLY | O_APPEND);
         if (fd < 0) {
-            syslog(LOG_ERR, "Failed to open %s for writing: %s", DATAFILE_PATH, strerror(errno));
+            syslog(LOG_ERR, "Failed to open for write: %s", strerror(errno));
             pthread_mutex_unlock(&g_file_mutex);
             break;
         }
 
-        ssize_t written = write(fd, rx_buffer, rx_bytes);
+        write(fd, rx_buffer, rx_bytes);
         close(fd);
         pthread_mutex_unlock(&g_file_mutex);
 
-        if (written < 0) {
-            syslog(LOG_ERR, "Write to %s failed: %s", DATAFILE_PATH, strerror(errno));
-            break;
-        }
-
+        // Echo back only on newline
         if (memchr(rx_buffer, '\n', rx_bytes)) {
             pthread_mutex_lock(&g_file_mutex);
-
             fd = open(DATAFILE_PATH, O_RDONLY);
             if (fd < 0) {
-                syslog(LOG_ERR, "Failed to open %s for reading: %s", DATAFILE_PATH, strerror(errno));
+                syslog(LOG_ERR, "Failed to open for read: %s", strerror(errno));
                 pthread_mutex_unlock(&g_file_mutex);
                 break;
             }
 
-            char send_buffer[BUF_MAXLEN];
+            char send_buf[BUF_MAXLEN];
             ssize_t bytes_read;
-            while ((bytes_read = read(fd, send_buffer, BUF_MAXLEN)) > 0) {
-                send(client_fd, send_buffer, bytes_read, 0);
+            while ((bytes_read = read(fd, send_buf, BUF_MAXLEN)) > 0) {
+                send(client_fd, send_buf, bytes_read, 0);
             }
+
             close(fd);
             pthread_mutex_unlock(&g_file_mutex);
         }
@@ -160,7 +195,6 @@ static void* client_thread_func(void *arg) {
     shutdown(client_fd, SHUT_RDWR);
     close(client_fd);
     syslog(LOG_INFO, "Closed connection from %s", client_ip);
-
     return NULL;
 }
 
@@ -228,4 +262,3 @@ int main(int argc, char *argv[]) {
     closelog();
     return 0;
 }
-
